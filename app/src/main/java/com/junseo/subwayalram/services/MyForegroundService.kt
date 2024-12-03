@@ -488,19 +488,29 @@ class MyForegroundService : Service() {
 
                     MLog.WriteLog("sehwan", "checkStayLocation 거리차이 : $distance")
                     if(distance <= 20) {
-                        sendLogToActivity("위치정보 트리거 : 1분")
-                        checkStartTime = null
-                        preLocation = null
-                        SharedPrefsUtil.putInt(this, "LOCATION_INFORMATION_REQUEST_INTERVAL", 1000 * 60)
-                        resetLocationUpdates()
+                        val interval = SharedPrefsUtil.getInt(this, "LOCATION_INFORMATION_REQUEST_INTERVAL")
+                        if(interval != 1000 * 60) {
+                            sendLogToActivity("위치정보 트리거 : 1분")
+                            checkStartTime = null
+                            preLocation = null
+                            SharedPrefsUtil.putInt(
+                                this,
+                                "LOCATION_INFORMATION_REQUEST_INTERVAL",
+                                1000 * 60
+                            )
+                            resetLocationUpdates()
+                        }
                     }
 
                     if(distance > 500) {
-                        sendLogToActivity("위치정보 트리거 : 20초")
-                        checkStartTime = null
-                        preLocation = null
-                        SharedPrefsUtil.putInt(this, "LOCATION_INFORMATION_REQUEST_INTERVAL", 1000 * 20)
-                        resetLocationUpdates()
+                        val interval = SharedPrefsUtil.getInt(this, "LOCATION_INFORMATION_REQUEST_INTERVAL")
+                        if(interval != 1000 * 20) {
+                            sendLogToActivity("위치정보 트리거 : 20초")
+                            checkStartTime = null
+                            preLocation = null
+                            SharedPrefsUtil.putInt(this, "LOCATION_INFORMATION_REQUEST_INTERVAL", 1000 * 20)
+                            resetLocationUpdates()
+                        }
                     }
                 }
             }
