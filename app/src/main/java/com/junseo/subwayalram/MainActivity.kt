@@ -81,8 +81,11 @@ import com.junseo.subwayalram.common.CommonInfo
 import com.junseo.subwayalram.databaseutils.DatabaseProvider
 import com.junseo.subwayalram.databaseutils.SelectedSubway
 import com.junseo.subwayalram.databaseutils.SubwayDatabase
+import com.junseo.subwayalram.databaseutils.SubwayLineInfoEntity
 import com.junseo.subwayalram.databaseutils.SubwayStatioinDetailInfo
 import com.junseo.subwayalram.databaseutils.SubwayStation
+import com.junseo.subwayalram.datas.StationInfo
+import com.junseo.subwayalram.datas.SubwayLineInfo
 import com.junseo.subwayalram.retrofit.RetrofitClient
 import com.junseo.subwayalram.services.LogBroadcastReceiver
 import com.junseo.subwayalram.services.MyForegroundService
@@ -90,6 +93,7 @@ import com.junseo.subwayalram.ui.theme.SubwayAlramTheme
 import com.junseo.subwayalram.utils.ActivityResultUtil
 import com.junseo.subwayalram.utils.GeofenceManager
 import com.junseo.subwayalram.utils.SharedPrefsUtil
+import com.junseo.subwayalram.utils.log.MLog
 import com.junseo.subwayalram.viewmodels.LogModel
 import com.junseo.subwayalram.viewmodels.SelectedSubwayRepository
 import com.junseo.subwayalram.viewmodels.SelectedSubwayViewModel
@@ -123,6 +127,50 @@ class MainActivity : ComponentActivity() {
         val sdf = SimpleDateFormat(CommonInfo.DATE_FORMAT, Locale.KOREA)
         SharedPrefsUtil.putDate(this, CommonInfo.KEY_SUBWAY_INFO_SAVED_DATE, sdf.format(Date()))
     }
+
+    private fun fetchSubwayLineInfo() {
+        val apiService = RetrofitClient.openapiInstance
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val response = apiService.getSubwayLineInfo(CommonInfo.SUBWAY_REAL_TIME_ARRIVAL_INFORMATION_KEY, 1, 1000)
+
+                if(response.isSuccessful) {
+                    response.body()?.let {
+                        MLog.d("sehwan", it.SearchSTNBySubwayLineInfo.row.toString())
+
+                        val subwayLineInfos = it.SearchSTNBySubwayLineInfo.row.map { item -> item.toEntity() }.filter { subwayLineInfo ->
+                            database.subwayLineInfoDao().isStationExists(subwayLineInfo.STATION_CD) == 0
+                        }
+
+                        if(subwayLineInfos.isNotEmpty()) {
+                            database.subwayLineInfoDao().insertStations(subwayLineInfos)
+                        }
+                    }
+                }
+            } catch (e:Exception) {
+                MLog.e("sehwan", e.toString())
+            }
+        }
+    }
+
+    fun SubwayLineInfoEntity.toStationInfo(): StationInfo {
+        return StationInfo(
+            STATION_CD = this.STATION_CD,
+            STATION_NM = this.STATION_NM,
+            LINE_NUM = this.LINE_NUM,
+            FR_CODE = this.FR_CODE
+        )
+    }
+
+    private fun StationInfo.toEntity(): SubwayLineInfoEntity {
+        return SubwayLineInfoEntity(
+            STATION_CD = this.STATION_CD,
+            STATION_NM = this.STATION_NM,
+            LINE_NUM = this.LINE_NUM,
+            FR_CODE = this.FR_CODE
+        )
+    }
+
 
     private fun fetchAndSaveSubwayStations() {
         try {
@@ -258,6 +306,9 @@ class MainActivity : ComponentActivity() {
                 fetchAndSaveSubwayStations()
             }
         }
+
+        // 새로운 코드로 진행 예정
+        //fetchSubwayLineInfo()
 
         // DB 사용전 선택정보를 프리퍼런스에 저장함(현재는 사용안함)
         val savedSubwayStation = SharedPrefsUtil.getString(this, CommonInfo.KEY_SAVED_SELECT_SUBWAY_STATION)
