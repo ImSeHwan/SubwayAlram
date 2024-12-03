@@ -73,7 +73,7 @@ class MyForegroundService : Service() {
     private var isLocationUpdates = false // LocationUpdates 모듈 활성화 여부
 
     var entryCheckRadius = CommonInfo.ENTRY_CHECK_RADIUS
-    var rocationInfomationRequestInterval = CommonInfo.LOCATION_INFORMATION_REQUEST_INTERVAL
+    var locationInfomationRequestInterval = CommonInfo.LOCATION_INFORMATION_REQUEST_INTERVAL
 
     private val processor = DataProcessor(maxFalseDetection = 2)
 
@@ -90,14 +90,17 @@ class MyForegroundService : Service() {
     private fun resetLocationUpdates() {
         notificationCountMap.clear()
 
+        MLog.WriteLog("sehwan", "requestLocationUpdates 플래그 [$isLocationUpdates]")
+
         entryCheckRadius = SharedPrefsUtil.getInt(this, "ENTRY_CHECK_RADIUS", entryCheckRadius)
         val interval = SharedPrefsUtil.getInt(this, "LOCATION_INFORMATION_REQUEST_INTERVAL", CommonInfo.LOCATION_INFORMATION_REQUEST_INTERVAL)
 
-        if(rocationInfomationRequestInterval != interval) {
+        if(locationInfomationRequestInterval != interval) {
+            locationInfomationRequestInterval = interval
             sendLogToActivity("설정값을 변경합니다. 반경(m) : $entryCheckRadius, 주기시간(초) : ${interval / 1000}")
 
             fusedLocationClient.removeLocationUpdates(locationCallback).addOnSuccessListener {
-                //requestLocationUpdates()
+                isLocationUpdates = false
                 MLog.WriteLog("sehwan", "requestLocationUpdates 제거에 성공하였습니다.")
             }
                 .addOnFailureListener{
@@ -123,7 +126,7 @@ class MyForegroundService : Service() {
         Log.d("MyService", "Service Created")
 
         entryCheckRadius = SharedPrefsUtil.getInt(this, "ENTRY_CHECK_RADIUS", entryCheckRadius)
-        rocationInfomationRequestInterval = SharedPrefsUtil.getInt(this, "LOCATION_INFORMATION_REQUEST_INTERVAL", rocationInfomationRequestInterval)
+        locationInfomationRequestInterval = SharedPrefsUtil.getInt(this, "LOCATION_INFORMATION_REQUEST_INTERVAL", locationInfomationRequestInterval)
 
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
 
@@ -205,9 +208,9 @@ class MyForegroundService : Service() {
             // 네트워크 기반으로 추정된 위치 정보 활용
             val locationRequest = LocationRequest.Builder(
                 Priority.PRIORITY_HIGH_ACCURACY, // 위치 우선순위 설정
-                rocationInfomationRequestInterval.toLong() // 요청 간격 (밀리초 단위)
+                locationInfomationRequestInterval.toLong() // 요청 간격 (밀리초 단위)
             ).apply {
-                setMinUpdateIntervalMillis((rocationInfomationRequestInterval/2).toLong()) // 최소 업데이트 간격
+                setMinUpdateIntervalMillis((locationInfomationRequestInterval/2).toLong()) // 최소 업데이트 간격
                 setWaitForAccurateLocation(false)  // 정확한 위치 기다림 설정
             }.build()
 
@@ -539,6 +542,15 @@ class MyForegroundService : Service() {
         }
     }
 
+    fun areArraysEqual(arr1: ArrayList<String>, arr2: ArrayList<String>): Boolean {
+        if (arr1.size != arr2.size) return false
+        for (i in arr1.indices) {
+            if (arr1[i] != arr2[i]) return false
+        }
+        return true
+    }
+
+    private var oldStationInfo = arrayListOf<String>()
     /**
      * location 정보를 가지고 유저의 이동 범위를 트리거하기위한 데이터 셋팅을 한다.
      */
@@ -555,6 +567,14 @@ class MyForegroundService : Service() {
         }
 
         if(detailStationList.isNotEmpty()) {
+            val checkStations = detailStationList.map { item -> "(${item.statnNm})(${item.lineName})" }
+
+            // 로그를 위한 로직
+            if(!areArraysEqual(ArrayList(checkStations), oldStationInfo)) {
+                sendLogToActivity(ArrayList(checkStations).toString())
+                oldStationInfo = ArrayList(checkStations)
+            }
+
             val beforeTrackNumber = processor.getTrackedNumber()
             // 현재방향과 다른 정보가 하나만 들어왔을 떄 동일한 이름의 역을 가져오기위해 데이터를 보정한다.
             if(detailStationList.size == 1 && beforeTrackNumber > 0 && beforeTrackNumber != detailStationList[0].statnId) {
