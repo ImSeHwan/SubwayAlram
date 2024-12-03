@@ -90,7 +90,7 @@ interface SubwayLineInfoDao {
     @Insert
     suspend fun insertStations(stations: List<SubwayLineInfoEntity>)
 
-    @Query("SELECT * FROM subway_line_info")
+    @Query("SELECT * FROM subway_line_info ORDER BY LINE_NUM, FR_CODE")
     suspend fun getAllStations(): List<SubwayLineInfoEntity>
 
     @Query("SELECT * FROM subway_line_info WHERE STATION_CD = :stationCode")

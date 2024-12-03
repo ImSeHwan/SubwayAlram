@@ -308,7 +308,7 @@ class MainActivity : ComponentActivity() {
         }
 
         // 새로운 코드로 진행 예정
-        //fetchSubwayLineInfo()
+        fetchSubwayLineInfo()
 
         // DB 사용전 선택정보를 프리퍼런스에 저장함(현재는 사용안함)
         val savedSubwayStation = SharedPrefsUtil.getString(this, CommonInfo.KEY_SAVED_SELECT_SUBWAY_STATION)

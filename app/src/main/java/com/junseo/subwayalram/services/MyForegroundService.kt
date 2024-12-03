@@ -42,6 +42,7 @@ import com.junseo.subwayalram.common.CommonInfo
 import com.junseo.subwayalram.databaseutils.DatabaseProvider
 import com.junseo.subwayalram.databaseutils.SelectedSubway
 import com.junseo.subwayalram.databaseutils.SubwayDatabase
+import com.junseo.subwayalram.databaseutils.SubwayLineInfoEntity
 import com.junseo.subwayalram.databaseutils.SubwayStatioinDetailInfo
 import com.junseo.subwayalram.databaseutils.SubwayStation
 import com.junseo.subwayalram.datas.ArrivalInfo
@@ -53,6 +54,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import retrofit2.Call
 import retrofit2.Callback
@@ -119,6 +121,8 @@ class MyForegroundService : Service() {
         }
     }
 
+    // 호선별 역코드 배열
+    var groupedStations:Map<String, List<SubwayLineInfoEntity>>? = null
     override fun onCreate() {
 
         super.onCreate()
@@ -137,6 +141,18 @@ class MyForegroundService : Service() {
         requestLocationUpdates()
 
         setAllStationInfo()
+
+        CoroutineScope(Dispatchers.IO).launch {
+            groupedStations = groupStationsByLine()
+
+            groupedStations?.forEach { (line, stations) ->
+                MLog.d("sehwan", "LINE_NUM: $line")
+                stations.forEach { station ->
+                    MLog.d("sehwan","  ${station.STATION_CD} - ${station.STATION_NM} (FR_CODE: ${station.FR_CODE})")
+                }
+            }
+        }
+
 
 //        CoroutineScope(Dispatchers.Main).launch {
 //            // 1초 동안 지연
@@ -396,6 +412,11 @@ class MyForegroundService : Service() {
         }
     }
 
+    suspend fun groupStationsByLine(): Map<String, List<SubwayLineInfoEntity>> = withContext(Dispatchers.IO) {
+        val stations = database.subwayLineInfoDao().getAllStations()
+        stations.groupBy { it.LINE_NUM } // LINE_NUM 기준으로 그룹화
+    }
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = getSystemService(NotificationManager::class.java)
@@ -550,7 +571,7 @@ class MyForegroundService : Service() {
         return true
     }
 
-    var oldStationInfo = arrayListOf<String>()
+    private var oldStationInfo = arrayListOf<String>()
     /**
      * location 정보를 가지고 유저의 이동 범위를 트리거하기위한 데이터 셋팅을 한다.
      */
@@ -569,6 +590,7 @@ class MyForegroundService : Service() {
         if(detailStationList.isNotEmpty()) {
             val checkStations = detailStationList.map { item -> "(${item.statnNm})(${item.lineName})" }
 
+            // 로그를 위한 로직
             if(!areArraysEqual(ArrayList(checkStations), oldStationInfo)) {
                 sendLogToActivity(ArrayList(checkStations).toString())
                 oldStationInfo = ArrayList(checkStations)
