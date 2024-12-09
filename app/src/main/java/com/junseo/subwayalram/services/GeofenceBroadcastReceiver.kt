@@ -33,7 +33,7 @@ class GeofenceBroadcastReceiver: BroadcastReceiver(){
                         Geofence.GEOFENCE_TRANSITION_ENTER -> {
                             triggeringGeofences?.forEach {
                                 //val subwayDetailInfo =
-                                Log.d("sehwan", "인입된 station id : ${it.requestId}")
+                                MLog.WriteLog("sehwan", "인입된 station id : ${it.requestId}")
                                 GeofenceEventManager.addEvent(it.requestId, context)
                             }
                         }

@@ -2,12 +2,14 @@ package com.junseo.subwayalram
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.BroadcastReceiver
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.util.Log
 import android.widget.TextView
 import android.widget.Toast
@@ -74,9 +76,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import com.google.gson.Gson
+import com.junseo.subwayalram.common.CommonFunc
 import com.junseo.subwayalram.common.CommonInfo
 import com.junseo.subwayalram.databaseutils.DatabaseProvider
 import com.junseo.subwayalram.databaseutils.SelectedSubway
@@ -104,6 +108,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -123,34 +128,60 @@ class MainActivity : ComponentActivity() {
     private lateinit var activityResultLauncher: ActivityResultLauncher<Intent>
     private lateinit var database: SubwayDatabase
 
+    private fun showFileSelectionDialog(directory: File) {
+
+        directory.listFiles()?.let {files ->
+            val fileNames = files.map { it.name }.toTypedArray()
+
+            AlertDialog.Builder(this)
+                .setTitle("파일선택")
+                .setItems(fileNames) {_, which ->
+                    val selectedFile = files[which]
+                    openFile(selectedFile)
+                }.show()
+        }
+    }
+
+    private fun openFileExplorer() {
+        // 경로 지정
+        val logDir = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            File(getExternalFilesDir("subway_alram_log")?.path ?: "")
+        } else {
+            File(Environment.getExternalStorageDirectory(), "subway_alram_log")
+        }
+
+        // 파일 선택 Dialog 열기
+        if (logDir.exists() && logDir.isDirectory) {
+            showFileSelectionDialog(logDir)
+        } else {
+            Toast.makeText(this, "폴더가 존재하지 않습니다.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun openFile(file: File) {
+        try {
+            // File을 Content URI로 변환
+            val uri = FileProvider.getUriForFile(
+                this,
+                "${BuildConfig.APPLICATION_ID}.provider",
+                file
+            )
+
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "text/plain") // MIME 타입 설정
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) // URI 읽기 권한 부여
+            }
+
+            startActivity(Intent.createChooser(intent, "파일 열기"))
+        } catch (e: Exception) {
+            Toast.makeText(this, "파일을 열 수 없습니다.", Toast.LENGTH_SHORT).show()
+            e.printStackTrace()
+        }
+    }
+
     private fun saveDataToSharedPrefs() {
         val sdf = SimpleDateFormat(CommonInfo.DATE_FORMAT, Locale.KOREA)
         SharedPrefsUtil.putDate(this, CommonInfo.KEY_SUBWAY_INFO_SAVED_DATE, sdf.format(Date()))
-    }
-
-    private fun fetchSubwayLineInfo() {
-        val apiService = RetrofitClient.openapiInstance
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val response = apiService.getSubwayLineInfo(CommonInfo.SUBWAY_REAL_TIME_ARRIVAL_INFORMATION_KEY, 1, 1000)
-
-                if(response.isSuccessful) {
-                    response.body()?.let {
-                        MLog.d("sehwan", it.SearchSTNBySubwayLineInfo.row.toString())
-
-                        val subwayLineInfos = it.SearchSTNBySubwayLineInfo.row.map { item -> item.toEntity() }.filter { subwayLineInfo ->
-                            database.subwayLineInfoDao().isStationExists(subwayLineInfo.STATION_CD) == 0
-                        }
-
-                        if(subwayLineInfos.isNotEmpty()) {
-                            database.subwayLineInfoDao().insertStations(subwayLineInfos)
-                        }
-                    }
-                }
-            } catch (e:Exception) {
-                MLog.e("sehwan", e.toString())
-            }
-        }
     }
 
     fun SubwayLineInfoEntity.toStationInfo(): StationInfo {
@@ -166,11 +197,10 @@ class MainActivity : ComponentActivity() {
         return SubwayLineInfoEntity(
             STATION_CD = this.STATION_CD,
             STATION_NM = this.STATION_NM,
-            LINE_NUM = this.LINE_NUM,
+            LINE_NUM = this.LINE_NUM.replace("0", ""),
             FR_CODE = this.FR_CODE
         )
     }
-
 
     private fun fetchAndSaveSubwayStations() {
         try {
@@ -307,9 +337,6 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // 새로운 코드로 진행 예정
-        fetchSubwayLineInfo()
-
         // DB 사용전 선택정보를 프리퍼런스에 저장함(현재는 사용안함)
         val savedSubwayStation = SharedPrefsUtil.getString(this, CommonInfo.KEY_SAVED_SELECT_SUBWAY_STATION)
         if(savedSubwayStation == null) {
@@ -325,33 +352,38 @@ class MainActivity : ComponentActivity() {
             if (result.resultCode == Activity.RESULT_OK) {
                 // 결과 처리 로직
                 val data = result.data
-
-                val id = data?.getIntExtra("STATION_ID", 0) ?: 0
                 val stationName = data?.getStringExtra("STATION_NAME") ?: ""
-                val lineName = data?.getStringExtra("STATION_LINENAME") ?: ""
-                val latitude = data?.getDoubleExtra("STATION_LATITUDE", 0.0) ?: 0.0
-                val longitude = data?.getDoubleExtra("STATION_LONGITUDE", 0.0) ?: 0.0
-                val statnId = data?.getLongExtra("STATION_INFO_ID", 0) ?: 0
-
-                val station = SelectedSubway(id, stationName, lineName, latitude, longitude, statnId.toString())
 
                 CoroutineScope(Dispatchers.IO).launch {
-                    //database.selectedSubwayDao().insertStation(station)
-                    selectedViewModel.addSubway(station)
+                    val stationList = database.subwayStationDao().searchStations("%$stationName%")
+                    val stationLineInfos = DatabaseProvider.getDatabase(this@MainActivity)
+                        .subwayLineInfoDao().getStationByName(stationName)
 
-                    MyApplication.getInstance().geofenceManager?.addGeofence(station, 200F)
+                    val selectedSubways = stationList.mapNotNull { station ->
+                        val matchingStation = stationLineInfos.find { stationLineInfo ->
+                            val convertLineName = if(station.lineName == "경부선" || station.lineName == "경원선") "1호선" else station.lineName
+                            convertLineName == stationLineInfo.LINE_NUM.replace("0", "")
+                        }
+                        if(matchingStation != null) {
+                            SelectedSubway(
+                                station.id,
+                                CommonFunc.extractStationName(station.stationName),
+                                if(station.lineName == "경부선" || station.lineName == "경원선") "1호선" else station.lineName,
+                                station.latitude,
+                                station.longitude,
+                                matchingStation.FR_CODE
+                            )
+                        } else {
+                            null
+                        }
+                    }
+
+                    for (selectedSubway in selectedSubways) {
+                        MLog.d("sehwan", "selectedSubway name : ${selectedSubway.stationName}, line : ${selectedSubway.lineName}")
+                        selectedViewModel.addSubway(selectedSubway)
+                        MyApplication.getInstance().geofenceManager?.addGeofence(selectedSubway, 200F)
+                    }
                 }
-
-//                val station = SubwayStation(id, stationName, lineName, latitude, longitude)
-//                val gson = Gson()
-//                val jsonString = gson.toJson(station)
-//                SharedPrefsUtil.putString(
-//                    this,
-//                    CommonInfo.KEY_SAVED_SELECT_SUBWAY_STATION,
-//                    jsonString
-//                )
-
-                // 데이터를 이용해 작업 수행
             }
         }
 
@@ -480,6 +512,13 @@ class MainActivity : ComponentActivity() {
                     },
                         modifier = Modifier.padding(5.dp)) {
                         Text("설정")
+                    }
+
+                    Button(onClick = {
+                        openFileExplorer()
+                    },
+                        modifier = Modifier.padding(5.dp)) {
+                        Text("로그확인")
                     }
                 }
 
