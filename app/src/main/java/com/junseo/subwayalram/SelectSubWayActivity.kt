@@ -83,16 +83,8 @@ class SelectSubWayActivity : ComponentActivity() {
                                         CoroutineScope(Dispatchers.IO).launch {
                                             val extractStationName = CommonFunc.extractStationName(station.stationName)
 
-                                            val stationDetails = DatabaseProvider.getDatabase(this@SelectSubWayActivity).subwayStationDetailInfoDao()
-                                                .getStationsByNameAndLine(extractStationName, station.lineName)
-
                                             val intent = Intent().apply {
-                                                putExtra("STATION_ID", station.id)
-                                                putExtra("STATION_LINENAME", station.lineName)
                                                 putExtra("STATION_NAME", extractStationName)
-                                                putExtra("STATION_LATITUDE", station.latitude)
-                                                putExtra("STATION_LONGITUDE", station.longitude)
-                                                putExtra("STATION_INFO_ID", stationDetails[0].statnId)
                                             }
                                             setResult(RESULT_OK, intent)
                                             if (!isFinishing) finish()

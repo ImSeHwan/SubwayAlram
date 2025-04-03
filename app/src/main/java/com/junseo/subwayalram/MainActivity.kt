@@ -2,12 +2,19 @@ package com.junseo.subwayalram
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
+import android.app.PendingIntent
 import android.content.BroadcastReceiver
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.os.IBinder
 import android.util.Log
 import android.widget.TextView
 import android.widget.Toast
@@ -74,15 +81,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import com.google.gson.Gson
+import com.junseo.subwayalram.common.CommonFunc
 import com.junseo.subwayalram.common.CommonInfo
 import com.junseo.subwayalram.databaseutils.DatabaseProvider
 import com.junseo.subwayalram.databaseutils.SelectedSubway
 import com.junseo.subwayalram.databaseutils.SubwayDatabase
+import com.junseo.subwayalram.databaseutils.SubwayLineInfoEntity
 import com.junseo.subwayalram.databaseutils.SubwayStatioinDetailInfo
 import com.junseo.subwayalram.databaseutils.SubwayStation
+import com.junseo.subwayalram.datas.StationInfo
+import com.junseo.subwayalram.datas.SubwayLineInfo
 import com.junseo.subwayalram.retrofit.RetrofitClient
 import com.junseo.subwayalram.services.LogBroadcastReceiver
 import com.junseo.subwayalram.services.MyForegroundService
@@ -90,6 +102,7 @@ import com.junseo.subwayalram.ui.theme.SubwayAlramTheme
 import com.junseo.subwayalram.utils.ActivityResultUtil
 import com.junseo.subwayalram.utils.GeofenceManager
 import com.junseo.subwayalram.utils.SharedPrefsUtil
+import com.junseo.subwayalram.utils.log.MLog
 import com.junseo.subwayalram.viewmodels.LogModel
 import com.junseo.subwayalram.viewmodels.SelectedSubwayRepository
 import com.junseo.subwayalram.viewmodels.SelectedSubwayViewModel
@@ -100,6 +113,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -119,9 +133,78 @@ class MainActivity : ComponentActivity() {
     private lateinit var activityResultLauncher: ActivityResultLauncher<Intent>
     private lateinit var database: SubwayDatabase
 
+    private fun showFileSelectionDialog(directory: File) {
+
+        directory.listFiles()?.let {files ->
+            val fileNames = files.map { it.name }.toTypedArray()
+
+            AlertDialog.Builder(this)
+                .setTitle("파일선택")
+                .setItems(fileNames) {_, which ->
+                    val selectedFile = files[which]
+                    openFile(selectedFile)
+                }.show()
+        }
+    }
+
+    private fun openFileExplorer() {
+        // 경로 지정
+        val logDir = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            File(getExternalFilesDir("subway_alram_log")?.path ?: "")
+        } else {
+            File(Environment.getExternalStorageDirectory(), "subway_alram_log")
+        }
+
+        // 파일 선택 Dialog 열기
+        if (logDir.exists() && logDir.isDirectory) {
+            showFileSelectionDialog(logDir)
+        } else {
+            Toast.makeText(this, "폴더가 존재하지 않습니다.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun openFile(file: File) {
+        try {
+            // File을 Content URI로 변환
+            val uri = FileProvider.getUriForFile(
+                this,
+                "${BuildConfig.APPLICATION_ID}.provider",
+                file
+            )
+
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "text/plain") // MIME 타입 설정
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) // URI 읽기 권한 부여
+            }
+
+            startActivity(Intent.createChooser(intent, "파일 열기"))
+        } catch (e: Exception) {
+            Toast.makeText(this, "파일을 열 수 없습니다.", Toast.LENGTH_SHORT).show()
+            e.printStackTrace()
+        }
+    }
+
     private fun saveDataToSharedPrefs() {
         val sdf = SimpleDateFormat(CommonInfo.DATE_FORMAT, Locale.KOREA)
         SharedPrefsUtil.putDate(this, CommonInfo.KEY_SUBWAY_INFO_SAVED_DATE, sdf.format(Date()))
+    }
+
+    fun SubwayLineInfoEntity.toStationInfo(): StationInfo {
+        return StationInfo(
+            STATION_CD = this.STATION_CD,
+            STATION_NM = this.STATION_NM,
+            LINE_NUM = this.LINE_NUM,
+            FR_CODE = this.FR_CODE
+        )
+    }
+
+    private fun StationInfo.toEntity(): SubwayLineInfoEntity {
+        return SubwayLineInfoEntity(
+            STATION_CD = this.STATION_CD,
+            STATION_NM = this.STATION_NM,
+            LINE_NUM = this.LINE_NUM.replace("0", ""),
+            FR_CODE = this.FR_CODE
+        )
     }
 
     private fun fetchAndSaveSubwayStations() {
@@ -274,44 +357,58 @@ class MainActivity : ComponentActivity() {
             if (result.resultCode == Activity.RESULT_OK) {
                 // 결과 처리 로직
                 val data = result.data
-
-                val id = data?.getIntExtra("STATION_ID", 0) ?: 0
                 val stationName = data?.getStringExtra("STATION_NAME") ?: ""
-                val lineName = data?.getStringExtra("STATION_LINENAME") ?: ""
-                val latitude = data?.getDoubleExtra("STATION_LATITUDE", 0.0) ?: 0.0
-                val longitude = data?.getDoubleExtra("STATION_LONGITUDE", 0.0) ?: 0.0
-                val statnId = data?.getLongExtra("STATION_INFO_ID", 0) ?: 0
-
-                val station = SelectedSubway(id, stationName, lineName, latitude, longitude, statnId.toString())
 
                 CoroutineScope(Dispatchers.IO).launch {
-                    //database.selectedSubwayDao().insertStation(station)
-                    selectedViewModel.addSubway(station)
+                    val stationList = database.subwayStationDao().searchStations("%$stationName%")
+                    val stationLineInfos = DatabaseProvider.getDatabase(this@MainActivity)
+                        .subwayLineInfoDao().getStationByName(stationName)
 
-                    MyApplication.getInstance().geofenceManager?.addGeofence(station, 200F)
+                    val selectedSubways = stationList.mapNotNull { station ->
+                        val matchingStation = stationLineInfos.find { stationLineInfo ->
+                            val convertLineName = if(station.lineName == "경부선" || station.lineName == "경원선") "1호선" else station.lineName
+                            //convertLineName == stationLineInfo.LINE_NUM.replace("0", "")
+                            //convertLineName.contains(stationLineInfo.LINE_NUM.replace("0", ""))
+                            stationLineInfo.LINE_NUM.contains(convertLineName)
+                        }
+                        if(matchingStation != null) {
+                            SelectedSubway(
+                                station.id,
+                                CommonFunc.extractStationName(station.stationName),
+                                if(station.lineName == "경부선" || station.lineName == "경원선") "1호선" else station.lineName,
+                                station.latitude,
+                                station.longitude,
+                                matchingStation.FR_CODE
+                            )
+                        } else {
+                            null
+                        }
+                    }
+
+                    for (selectedSubway in selectedSubways) {
+                        MLog.d("sehwan", "selectedSubway name : ${selectedSubway.stationName}, line : ${selectedSubway.lineName}")
+                        selectedViewModel.addSubway(selectedSubway)
+                        MyApplication.getInstance().geofenceManager?.addGeofence(selectedSubway, 200F)
+                    }
                 }
-
-//                val station = SubwayStation(id, stationName, lineName, latitude, longitude)
-//                val gson = Gson()
-//                val jsonString = gson.toJson(station)
-//                SharedPrefsUtil.putString(
-//                    this,
-//                    CommonInfo.KEY_SAVED_SELECT_SUBWAY_STATION,
-//                    jsonString
-//                )
-
-                // 데이터를 이용해 작업 수행
             }
         }
 
         // LogBroadcastReceiver 등록
         logBroadcastReceiver = LogBroadcastReceiver(logViewModel)
         val filter = IntentFilter("com.junseo.subwayalram.UPDATE_DATA")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            registerReceiver(logBroadcastReceiver, filter, RECEIVER_EXPORTED)
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            PendingIntent.FLAG_MUTABLE or Context.RECEIVER_EXPORTED
         } else {
-            registerReceiver(logBroadcastReceiver, filter)
+            PendingIntent.FLAG_MUTABLE
         }
+        registerReceiver(logBroadcastReceiver, filter, flags)
+
+//        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+//            registerReceiver(logBroadcastReceiver, filter, RECEIVER_EXPORTED)
+//        } else {
+//            registerReceiver(logBroadcastReceiver, filter, RECEIVER_EXPORTED)
+//        }
 
         // 퍼미션 요청 결과 처리
         permissionLauncher = registerForActivityResult(
@@ -346,14 +443,30 @@ class MainActivity : ComponentActivity() {
         requestPermissions()
     }
 
+    private var myForegroundService: MyForegroundService? = null
+    private var isBound = false
+    private val serviceState = mutableStateOf(false)
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            myForegroundService = (binder as MyForegroundService.LocalBinder).getService()
+            isBound = true
+            serviceState.value = true
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            myForegroundService = null
+            isBound = false
+            serviceState.value = false
+        }
+    }
+
     private fun startService() {
         val serviceIntent = Intent(this, MyForegroundService::class.java)
         serviceIntent.action = MyForegroundService.ACTION_START_SERVICE
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent) // API 26 이상
-        } else {
-            startService(serviceIntent) // API 25 이하
-        }
+        startForegroundService(serviceIntent) // API 26 이상
+
+        bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE) // 통신을 위해 서비스를 바인딩한다.
     }
 
     private fun requestPermissions() {
@@ -392,6 +505,18 @@ class MainActivity : ComponentActivity() {
 
         // BroadcastReceiver 해제
         unregisterReceiver(logBroadcastReceiver)
+
+        if(isBound) {
+            unbindService(serviceConnection)
+            isBound = false
+        }
+    }
+
+    @Composable
+    fun speedDataUI(service: MyForegroundService) {
+        val interval = SharedPrefsUtil.getInt(this, "LOCATION_INFORMATION_REQUEST_INTERVAL", 0)
+        val speedByService by service.observespeedAverage().collectAsState(initial = 0.0)
+        Text(text = "평균속도 : ${String.format("%.2f", speedByService)}km/h (주기 : ${interval/1000}초)", modifier = Modifier.padding(start = 16.dp))
     }
 
     @Composable
@@ -430,6 +555,20 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.padding(5.dp)) {
                         Text("설정")
                     }
+
+                    Button(onClick = {
+                        openFileExplorer()
+                    },
+                        modifier = Modifier.padding(5.dp)) {
+                        Text("로그확인")
+                    }
+                }
+                if (serviceState.value) {
+                    myForegroundService?.let {
+                        speedDataUI(service = it)
+                    }
+                } else {
+                    Text("아직 서비스가 실행되지 않았습니다.", modifier = Modifier.padding(start = 16.dp))
                 }
 
                 //DynamicGridButtonContainer()

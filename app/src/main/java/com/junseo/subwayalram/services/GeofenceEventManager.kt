@@ -13,12 +13,14 @@ import kotlinx.coroutines.launch
 object GeofenceEventManager {
     private val geofenceEventBuffer:ArrayList<String> = arrayListOf()
     private var geofenceProcessingJob: Job? = null
-    private val bufferDurationMillis = 2000L // 2초 동안 버퍼링
+    private const val bufferDurationMillis = 200L // 2초 동안 버퍼링
 
     fun addEvent(requestId: String, context: Context?) {
         context?.let { cxt ->
             MLog.WriteLog("sehwan", "GeofenceEventManager add data")
-            geofenceEventBuffer.add(requestId)
+            if(!geofenceEventBuffer.contains(requestId)) {
+                geofenceEventBuffer.add(requestId)
+            }
 
             if (geofenceProcessingJob == null || geofenceProcessingJob?.isActive == false) {
                 geofenceProcessingJob = CoroutineScope(Dispatchers.IO).launch {
@@ -38,10 +40,17 @@ object GeofenceEventManager {
                 putExtra("STATION_ID_LIST", geofenceEventBuffer)
                 action = MyForegroundService.ACTION_REQUEST_TRIGER_SUBWAY
             }
-            MLog.d("sehwan", "합쳐진 데이터를 Foreground Service로 전송")
+            MLog.WriteLog("sehwan", "합쳐진 데이터를 Foreground Service로 전송")
             context.startService(serviceIntent)
 
             geofenceEventBuffer.clear()
+            if(geofenceProcessingJob != null) {
+                if(geofenceProcessingJob?.isActive == true) {
+                    geofenceProcessingJob?.cancel()
+                }
+
+                geofenceProcessingJob = null
+            }
         }
     }
 }

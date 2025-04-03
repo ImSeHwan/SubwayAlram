@@ -1,5 +1,6 @@
 package com.junseo.subwayalram.common
 
+import com.junseo.subwayalram.databaseutils.SubwayLineInfoEntity
 import com.junseo.subwayalram.databaseutils.SubwayStation
 
 class CommonInfo {
@@ -10,17 +11,52 @@ class CommonInfo {
 
         const val DATE_FORMAT = "yyyy-MM-dd"
 
-        const val LOCATION_INFORMATION_REQUEST_INTERVAL = 1000 * 60
+        const val LOCATION_INFORMATION_REQUEST_INTERVAL = 1000 * 10
         const val LOCATION_INFORMATION_REQUEST_MIN_INTERVAL = LOCATION_INFORMATION_REQUEST_INTERVAL / 2
         const val ENTRY_CHECK_RADIUS = 100 // 단위 m
+
+        val testLocation: Array<SubwayStation> = arrayOf(
+            SubwayStation(outStnNum = 2546, stationName = "아차산", lineName = "5호선", latitude = 37.5744489, longitude = 126.9578855),
+            SubwayStation(outStnNum = 2547, stationName = "광나루", lineName = "5호선", latitude = 37.5758057, longitude = 126.9741147),
+            SubwayStation(outStnNum = 2548, stationName = "천호", lineName = "5호선", latitude = 37.570406, longitude = 126.991847),
+            SubwayStation(outStnNum = 2549, stationName = "강동", lineName = "5호선", latitude = 37.5660206, longitude = 126.9926685),
+            SubwayStation(outStnNum = 2555, stationName = "둔촌동", lineName = "5호선", latitude = 37.5660134, longitude = 126.9926694),
+            SubwayStation(outStnNum = 2556, stationName = "올림픽공원", lineName = "5호선", latitude = 37.5608269, longitude = 126.994436),
+        )
+        /**
+         * 호선별 역코드 배열
+         */
+        var groupedStations:Map<String, List<SubwayLineInfoEntity>>? = null
+        val subwayStations3: Array<Array<SubwayStation>> = arrayOf(
+            arrayOf(
+                SubwayStation(id=582, outStnNum=4130, stationName="종합운동장", lineName="9호선(연장)", latitude=37.511426, longitude=127.076275),
+                SubwayStation(id=617, outStnNum=218, stationName="종합운동장", lineName="2호선", latitude=37.511022, longitude=127.073704)
+            ),
+            arrayOf(
+                SubwayStation(id=381, outStnNum=217, stationName="잠실새내", lineName="2호선", latitude=37.511687, longitude=127.086162)
+            ),
+            arrayOf(
+                SubwayStation(id=304, outStnNum=2815, stationName="잠실(송파구청)", lineName="8호선", latitude=37.514692, longitude=127.104338),
+                SubwayStation(id=388, outStnNum=216, stationName="잠실(송파구청)", lineName="2호선", latitude=37.513262, longitude=127.100159)
+            ),
+            arrayOf(
+                SubwayStation(id=395, outStnNum=215, stationName="잠실나루", lineName="2호선", latitude=37.520733, longitude=127.10379)
+            ),
+            arrayOf(
+                SubwayStation(id=631, outStnNum=214, stationName="강변(동서울터미널)", lineName="2호선", latitude=37.535095, longitude=127.094681)
+            ),
+        )
+
 
         // 테스트
         val subwayStations2DArray: Array<Array<SubwayStation>> = arrayOf(
             arrayOf(
                 SubwayStation(outStnNum = 328, stationName = "연신내", lineName = "3호선", latitude = 37.512759, longitude = 127.01122),
+                SubwayStation(outStnNum = 328, stationName = "연신내", lineName = "6호선", latitude = 37.512759, longitude = 127.01122),
             ),
             arrayOf(
                 SubwayStation(outStnNum = 324, stationName = "불광", lineName = "3호선", latitude = 37.548034, longitude = 127.015872),
+                SubwayStation(outStnNum = 324, stationName = "불광", lineName = "6호선", latitude = 37.548034, longitude = 127.015872),
             ),
             arrayOf(
                 SubwayStation(outStnNum = 320, stationName = "녹번", lineName = "3호선", latitude = 37.566672, longitude = 126.992548),
@@ -69,13 +105,11 @@ class CommonInfo {
                 SubwayStation(outStnNum = 320, stationName = "잠원", lineName = "3호선", latitude = 37.566672, longitude = 126.992548),
             ),
             arrayOf(
+                SubwayStation(outStnNum = 320, stationName = "고속터미널", lineName = "3호선", latitude = 37.566672, longitude = 126.992548),
                 SubwayStation(outStnNum = 320, stationName = "고속터미널", lineName = "7호선", latitude = 37.566672, longitude = 126.992548),
             ),
             arrayOf(
                 SubwayStation(outStnNum = 320, stationName = "교대", lineName = "2호선", latitude = 37.566672, longitude = 126.992548),
-                SubwayStation(outStnNum = 320, stationName = "교대", lineName = "3호선", latitude = 37.566672, longitude = 126.992548),
-            ),
-            arrayOf(
                 SubwayStation(outStnNum = 320, stationName = "교대", lineName = "3호선", latitude = 37.566672, longitude = 126.992548),
             ),
             arrayOf(

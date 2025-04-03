@@ -13,6 +13,7 @@ import javax.net.ssl.X509TrustManager
 object RetrofitClient {
     private const val TDATA_BASE_URL = "https://t-data.seoul.go.kr"
     private const val SWOPENAPI_BASE_URL = "http://swopenapi.seoul.go.kr/api/"
+    private const val OPENAPI_BASE_URL = "http://openapi.seoul.go.kr:8088/"
 
     private val okHttpClient = unSafeOkHttpClient()
 
@@ -28,6 +29,15 @@ object RetrofitClient {
     val swopenapiInstance: SubwayApiService by lazy {
         Retrofit.Builder()
             .baseUrl(SWOPENAPI_BASE_URL)
+            .addConverterFactory(GsonConverterFactory.create())
+            .client(okHttpClient)
+            .build()
+            .create(SubwayApiService::class.java)
+    }
+
+    val openapiInstance: SubwayApiService by lazy {
+        Retrofit.Builder()
+            .baseUrl(OPENAPI_BASE_URL)
             .addConverterFactory(GsonConverterFactory.create())
             .client(okHttpClient)
             .build()

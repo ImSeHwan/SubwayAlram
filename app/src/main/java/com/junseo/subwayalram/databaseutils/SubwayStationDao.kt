@@ -81,3 +81,40 @@ interface SubwayStationDetailInfoDao {
         }
     }
 }
+
+@Dao
+interface SubwayLineInfoDao {
+    @Insert
+    suspend fun insertStation(station: SubwayLineInfoEntity)
+
+    @Insert
+    suspend fun insertStations(stations: List<SubwayLineInfoEntity>)
+
+    @Query("SELECT * FROM subway_line_info ORDER BY LINE_NUM, FR_CODE")
+    suspend fun getAllStations(): List<SubwayLineInfoEntity>
+
+    @Query("SELECT * FROM subway_line_info WHERE FR_CODE = :stationCode")
+    suspend fun getStationByCode(stationCode: String): SubwayLineInfoEntity?
+
+    @Query("SELECT * FROM subway_line_info WHERE STATION_CD = :stationCode")
+    suspend fun getStationByStationCode(stationCode: String): SubwayLineInfoEntity?
+
+    @Query("SELECT * FROM subway_line_info WHERE STATION_NM = :stationName")
+    suspend fun getStationByName(stationName: String): List<SubwayLineInfoEntity>
+
+    @Query("SELECT * FROM subway_line_info WHERE FR_CODE LIKE :query")
+    suspend fun searchTransferStationsByCode(query: String): List<SubwayLineInfoEntity>
+
+    //stationName = :stationName AND lineName = :lineName
+    @Query("SELECT * FROM subway_line_info WHERE STATION_NM = :stationName AND LINE_NUM = :stationLine")
+    suspend fun getStation(stationName: String, stationLine: String): SubwayLineInfoEntity?
+
+    @Delete
+    suspend fun deleteStation(station: SubwayLineInfoEntity)
+
+    @Query("DELETE FROM subway_line_info")
+    suspend fun deleteAllStations()
+
+    @Query("SELECT COUNT(*) FROM subway_line_info WHERE STATION_CD = :stationCode")
+    suspend fun isStationExists(stationCode: String): Int
+}
