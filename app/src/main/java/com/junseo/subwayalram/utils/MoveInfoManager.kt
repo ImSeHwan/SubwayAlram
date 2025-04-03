@@ -8,12 +8,18 @@ import com.junseo.subwayalram.common.CommonInfo
 import com.junseo.subwayalram.databaseutils.DatabaseProvider
 import com.junseo.subwayalram.databaseutils.SubwayDatabase
 import com.junseo.subwayalram.databaseutils.SubwayLineInfoEntity
+import com.junseo.subwayalram.datas.ArrivalInfo
+import com.junseo.subwayalram.datas.RealtimeStationArrivalResponse
 import com.junseo.subwayalram.datas.StationInfo
+import com.junseo.subwayalram.retrofit.RetrofitClient
 import com.junseo.subwayalram.services.MyForegroundService
 import com.junseo.subwayalram.utils.log.MLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import retrofit2.Call
+import retrofit2.Callback
+import retrofit2.Response
 import kotlin.math.abs
 
 class MoveInfoManager {
@@ -106,6 +112,19 @@ class MoveInfoManager {
 
 
                 if(intersection.size == 1) {
+//                    val preStationInfo = preDetectedSet.filter { it.LINE_NUM == _moveLineInfo }
+//                    val currentStationInfo = intersection.filter { it.LINE_NUM == _moveLineInfo }
+//                    if(preStationInfo.isNotEmpty() && currentStationInfo.isNotEmpty()) {
+//                        if(!isTransferStation(preStationInfo[0].STATION_NM, preStationInfo[0].FR_CODE, _moveLineInfo)) {
+//                            val cal = abs(calculate(preStationInfo[0].FR_CODE) - calculate(currentStationInfo[0].FR_CODE))
+//                            // 이전역과 한정거장 차이가 아니라면 건너뛴다.
+//                            if(cal != 1) {
+//                                MLog.WriteLog("sehwan", "스킵되는 역정보 : $intersection")
+//                                return@launch
+//                            }
+//                        }
+//                    }
+
                     if(_moveLineInfo != intersection[0].LINE_NUM) {
                         _moveLineInfo = intersection[0].LINE_NUM
                     }
@@ -160,43 +179,47 @@ class MoveInfoManager {
         CommonInfo.groupedStations?.let { allSubwayDatas ->
             val dataList = allSubwayDatas[moveLineInfo]
             when (moveLineInfo) {
-                "1호선" -> {
+                "01호선" -> {
                     dataList?.let {
                         process1Line(preStationInfo, currentStationInfo, dataList)
                     }
                 }
-                "2호선" -> {
+                "02호선" -> {
                     dataList?.let {
                         process2Line(preStationInfo, currentStationInfo, dataList)
                     }
                 }
-                "3호선" -> {
+                "03호선" -> {
                     dataList?.let {
                         processLine(preStationInfo, currentStationInfo, dataList)
                     }
                 }
-                "4호선" -> {
+                "04호선" -> {
                     dataList?.let {
                         processLine(preStationInfo, currentStationInfo, dataList)
                     }
                 }
-                "5호선" -> {}
-                "6호선" -> {
+                "05호선" -> {
+                    dataList?.let {
+                        process5Line(preStationInfo, currentStationInfo, dataList)
+                    }
+                }
+                "06호선" -> {
                     dataList?.let {
                         processLine(preStationInfo, currentStationInfo, dataList)
                     }
                 }
-                "7호선" -> {
+                "07호선" -> {
                     dataList?.let {
                         processLine(preStationInfo, currentStationInfo, dataList)
                     }
                 }
-                "8호선" -> {
+                "08호선" -> {
                     dataList?.let {
                         processLine(preStationInfo, currentStationInfo, dataList)
                     }
                 }
-                "9호선" -> {
+                "09호선" -> {
                     dataList?.let {
                         processLine(preStationInfo, currentStationInfo, dataList)
                     }
@@ -271,16 +294,6 @@ class MoveInfoManager {
             var preValue = calculate(preData.FR_CODE)
             val currentValue = calculate(currentData.FR_CODE)
 
-            /*
-            *
-            * if(currentData.FR_CODE == subwayLineInfos.last().FR_CODE) {
-                nextStation = subwayLineInfos.first().toStationInfo()
-            } else if (currentData.FR_CODE == subwayLineInfos.first().FR_CODE) {
-                nextStation = subwayLineInfos[1].toStationInfo()
-            } else {
-                nextStation = nextSubwayLineInfoEntity?.toStationInfo()
-            }
-            * */
             if(preValue > 0 && currentValue > 0) {
                 MLog.d("sehwan", "preValue : $preValue, currentValue : $currentValue")
                 result = preValue - currentValue
@@ -290,11 +303,79 @@ class MoveInfoManager {
         return  result
     }
 
+    /**
+     *
+     */
+    private suspend fun process5Line(preData:StationInfo?, currentData:StationInfo, subwayLineInfos: List<SubwayLineInfoEntity>) {
+        // pre - current 결과(result)가가 -이면 배열 순방향, +이면 배열 역방향
+        val result = calDirection(preData, currentData)
+
+        if(result != 0) {
+            val nextStation = nextStationIndex(currentData, subwayLineInfos, result < 0)
+
+            val selectedSubway = database.selectedSubwayDao().getAllStations() // 선택한 역들
+            val distSeletedSubway = selectedSubway.filter { currentData.LINE_NUM.contains(it.lineName) } //선택한 역중에 해당하는 호선만 구별
+
+            if(result < 0 && currentData.FR_CODE == "548") {
+                MyApplication.getInstance().sendLogToActivity("이번역은 환승역 입니다.")
+                val selectedStation = distSeletedSubway.find { it.statnId == "P549" }
+                selectedStation?.let {
+                    MyApplication.getInstance().sendLogToActivity("다음역은 ${selectedStation.stationName} 입니다.\n열차 방향을 확인해주세요.")
+                }
+            }
+
+            val findStation = distSeletedSubway.find { it.stationName == nextStation?.STATION_NM }
+
+            if(findStation != null) {
+                showNotification("안내", "다음역은 ${nextStation?.STATION_NM} 입니다.")
+                MyApplication.getInstance().sendLogToActivity("다음역은 ${nextStation?.STATION_NM} 입니다.")
+            }
+        }
+    }
+
+    /**
+     * 도착정보 API를 호출하여 역이름으로 도착정보를 가져온다. 아직은 정보만 뽑고 사용은 하지 않는다.
+     */
+    private fun fetchRealtimeStationArrival(searchSubwayStationName: String?, startIdx: Int, endIdx: Int, onResult: (List<ArrivalInfo>?) -> Unit) {
+
+        if(searchSubwayStationName != null) {
+            val call = RetrofitClient.swopenapiInstance.getRealtimeStationArrival(
+                CommonInfo.SUBWAY_REAL_TIME_ARRIVAL_INFORMATION_KEY,
+                startIdx,
+                endIdx,
+                searchSubwayStationName
+            )
+
+            call.enqueue(object : Callback<RealtimeStationArrivalResponse> {
+                override fun onResponse(
+                    call: Call<RealtimeStationArrivalResponse>,
+                    response: Response<RealtimeStationArrivalResponse>
+                ) {
+                    if (response.isSuccessful) {
+                        val arrivalList = response.body()?.realtimeArrivalList
+//                        arrivalList?.forEach { arrival ->
+//                            sendLogToActivity("열차 노선: ${arrival.trainLineNm}, 도착 메시지: ${arrival.arvlMsg2}")
+//                        }
+                        onResult(arrivalList) // 성공 시 리스트 반환
+                    } else {
+                        onResult(null) // 에러 시 null 반환
+                        println("API 응답 에러: ${response.errorBody()}")
+                    }
+                }
+
+                override fun onFailure(call: Call<RealtimeStationArrivalResponse>, t: Throwable) {
+                    println("API 호출 실패: ${t.message}")
+                    onResult(null) // 에러 시 null 반환
+                }
+            })
+        }
+    }
+
     private suspend fun process2Line(preData:StationInfo?, currentData:StationInfo, subwayLineInfos: List<SubwayLineInfoEntity>) {
         // 방향계산이 안되면 진행하지 않는다.
-        var result = calDirection2Line(preData, currentData, subwayLineInfos)
-        MLog.d("sehwan", "calDirection 이전 : ${preData?.STATION_NM}, 현재 : ${currentData.STATION_NM}")
-        MLog.d("sehwan", " calDirection result : $result")
+        var result = calDirection(preData, currentData)
+        MLog.WriteLog("sehwan", "calDirection 이전 : ${preData?.STATION_NM}, 현재 : ${currentData.STATION_NM}")
+        MLog.WriteLog("sehwan", " calDirection result : $result")
 
         // 시청, 충정로 처리
         if(preData?.FR_CODE == subwayLineInfos.last().FR_CODE &&
@@ -317,8 +398,8 @@ class MoveInfoManager {
                 MyApplication.getInstance().sendLogToActivity("다음역은 ${nextStation?.STATION_NM}(으)로 환승역 입니다.")
             }
 
-            MLog.d("sehwan", "예상 다음역 : ${nextStation?.STATION_NM}")
-            //MyApplication.getInstance().sendLogToActivity("예상 다음역 : ${nextStation?.STATION_NM}")
+            //MLog.d("sehwan", "예상 다음역 : ${nextStation?.STATION_NM}")
+            MyApplication.getInstance().sendLogToActivity("예상 다음역 : ${nextStation?.STATION_NM}")
 
             val selectedSubway = database.selectedSubwayDao().getAllStations() // 선택한 역들
             val distSeletedSubway = selectedSubway.filter { currentData.LINE_NUM.contains(it.lineName) } //선택한 역중에 해당하는 호선만 구별
@@ -358,7 +439,7 @@ class MoveInfoManager {
             }
 
             MLog.d("sehwan", "예상 다음역 : ${nextStation?.STATION_NM}")
-            MyApplication.getInstance().sendLogToActivity("예상 다음역 : ${nextStation?.STATION_NM}")
+            //MyApplication.getInstance().sendLogToActivity("예상 다음역 : ${nextStation?.STATION_NM}")
 
             val selectedSubway = database.selectedSubwayDao().getAllStations() // 선택한 역들
             val distSeletedSubway = selectedSubway.filter { currentData.LINE_NUM.contains(it.lineName) } //선택한 역중에 해당하는 호선만 구별
@@ -389,7 +470,7 @@ class MoveInfoManager {
         if(result != 0) {
             val nextStation = nextStationIndex(currentData, subwayLineInfos, result < 0)
 
-            MLog.d("sehwan", "예상 다음역 : ${nextStation?.STATION_NM}")
+            MLog.WriteLog("sehwan", "예상 다음역 : ${nextStation?.STATION_NM}")
             MyApplication.getInstance().sendLogToActivity("예상 다음역 : ${nextStation?.STATION_NM}")
 
             val selectedSubway = database.selectedSubwayDao().getAllStations() // 선택한 역들
@@ -441,8 +522,9 @@ class MoveInfoManager {
             val nextSubwayLineInfoEntity = subwayLineInfos.find {
                 val findCode = if(firstChar == null) "${calculate(currentData.FR_CODE) +1}" else "$firstChar${calculate(currentData.FR_CODE) +1}"
 
-                val firstCharByItem:Char? = it.FR_CODE.firstOrNull()?.takeIf { char -> !char.isDigit() }
-                val num = calculate(it.FR_CODE)
+                val itemFC = it.FR_CODE
+                val firstCharByItem:Char? = itemFC.firstOrNull()?.takeIf { char -> !char.isDigit() }
+                val num = calculate(itemFC)
                 val code = if(firstCharByItem == null) "$num" else "$firstCharByItem$num"
 
                 code == findCode
@@ -561,5 +643,40 @@ class MoveInfoManager {
             LINE_NUM = this.LINE_NUM,
             FR_CODE = this.FR_CODE
         )
+    }
+
+    /**
+     * subwayLineInfos 라인별 역정보
+     */
+    private suspend fun isTransferStation(stationName: String, stationsFRCode: String, stationLine: String): Boolean {
+        var isTransfer = false
+
+        val stations = database.subwayLineInfoDao().getStationByName(stationName)
+        if(stations.size > 1) {
+            isTransfer = true
+        } else {
+            CommonInfo.groupedStations?.let { allSubwayDatas ->
+                val dataList = allSubwayDatas[stationLine]
+                dataList?.let {
+                    for (item in it) {
+                        if(stationsFRCode.isDigitsOnly()) {
+                            if(item.FR_CODE == "P${stationsFRCode.toInt() + 1}") {
+                                MLog.d("sehwan", "환승정보(P) : $item")
+                                isTransfer = true
+                                break
+                            }
+                        }
+                        if(item.FR_CODE.contains("$stationsFRCode-")) {
+                            MLog.d("sehwan", "환승정보(-) : $item")
+                            isTransfer = true
+                            break
+                        }
+                    }
+                }
+
+            }
+        }
+
+        return isTransfer
     }
 }

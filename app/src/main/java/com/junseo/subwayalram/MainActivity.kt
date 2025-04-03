@@ -3,13 +3,18 @@ package com.junseo.subwayalram
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.PendingIntent
 import android.content.BroadcastReceiver
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.IBinder
 import android.util.Log
 import android.widget.TextView
 import android.widget.Toast
@@ -362,7 +367,9 @@ class MainActivity : ComponentActivity() {
                     val selectedSubways = stationList.mapNotNull { station ->
                         val matchingStation = stationLineInfos.find { stationLineInfo ->
                             val convertLineName = if(station.lineName == "경부선" || station.lineName == "경원선") "1호선" else station.lineName
-                            convertLineName == stationLineInfo.LINE_NUM.replace("0", "")
+                            //convertLineName == stationLineInfo.LINE_NUM.replace("0", "")
+                            //convertLineName.contains(stationLineInfo.LINE_NUM.replace("0", ""))
+                            stationLineInfo.LINE_NUM.contains(convertLineName)
                         }
                         if(matchingStation != null) {
                             SelectedSubway(
@@ -390,11 +397,18 @@ class MainActivity : ComponentActivity() {
         // LogBroadcastReceiver 등록
         logBroadcastReceiver = LogBroadcastReceiver(logViewModel)
         val filter = IntentFilter("com.junseo.subwayalram.UPDATE_DATA")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            registerReceiver(logBroadcastReceiver, filter, RECEIVER_EXPORTED)
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            PendingIntent.FLAG_MUTABLE or Context.RECEIVER_EXPORTED
         } else {
-            registerReceiver(logBroadcastReceiver, filter)
+            PendingIntent.FLAG_MUTABLE
         }
+        registerReceiver(logBroadcastReceiver, filter, flags)
+
+//        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+//            registerReceiver(logBroadcastReceiver, filter, RECEIVER_EXPORTED)
+//        } else {
+//            registerReceiver(logBroadcastReceiver, filter, RECEIVER_EXPORTED)
+//        }
 
         // 퍼미션 요청 결과 처리
         permissionLauncher = registerForActivityResult(
@@ -429,14 +443,30 @@ class MainActivity : ComponentActivity() {
         requestPermissions()
     }
 
+    private var myForegroundService: MyForegroundService? = null
+    private var isBound = false
+    private val serviceState = mutableStateOf(false)
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            myForegroundService = (binder as MyForegroundService.LocalBinder).getService()
+            isBound = true
+            serviceState.value = true
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            myForegroundService = null
+            isBound = false
+            serviceState.value = false
+        }
+    }
+
     private fun startService() {
         val serviceIntent = Intent(this, MyForegroundService::class.java)
         serviceIntent.action = MyForegroundService.ACTION_START_SERVICE
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent) // API 26 이상
-        } else {
-            startService(serviceIntent) // API 25 이하
-        }
+        startForegroundService(serviceIntent) // API 26 이상
+
+        bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE) // 통신을 위해 서비스를 바인딩한다.
     }
 
     private fun requestPermissions() {
@@ -475,6 +505,18 @@ class MainActivity : ComponentActivity() {
 
         // BroadcastReceiver 해제
         unregisterReceiver(logBroadcastReceiver)
+
+        if(isBound) {
+            unbindService(serviceConnection)
+            isBound = false
+        }
+    }
+
+    @Composable
+    fun speedDataUI(service: MyForegroundService) {
+        val interval = SharedPrefsUtil.getInt(this, "LOCATION_INFORMATION_REQUEST_INTERVAL", 0)
+        val speedByService by service.observespeedAverage().collectAsState(initial = 0.0)
+        Text(text = "평균속도 : ${String.format("%.2f", speedByService)}km/h (주기 : ${interval/1000}초)", modifier = Modifier.padding(start = 16.dp))
     }
 
     @Composable
@@ -520,6 +562,13 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.padding(5.dp)) {
                         Text("로그확인")
                     }
+                }
+                if (serviceState.value) {
+                    myForegroundService?.let {
+                        speedDataUI(service = it)
+                    }
+                } else {
+                    Text("아직 서비스가 실행되지 않았습니다.", modifier = Modifier.padding(start = 16.dp))
                 }
 
                 //DynamicGridButtonContainer()

@@ -12,7 +12,7 @@ object DatabaseProvider {
     fun getDatabase(context: Context): SubwayDatabase {
         return INSTANCE ?: synchronized(this) {
             val instance = Room.databaseBuilder(
-                context.applicationContext,
+                context,
                 SubwayDatabase::class.java,
                 DATABASE_NAME
             )

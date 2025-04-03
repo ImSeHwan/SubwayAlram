@@ -18,7 +18,9 @@ object GeofenceEventManager {
     fun addEvent(requestId: String, context: Context?) {
         context?.let { cxt ->
             MLog.WriteLog("sehwan", "GeofenceEventManager add data")
-            geofenceEventBuffer.add(requestId)
+            if(!geofenceEventBuffer.contains(requestId)) {
+                geofenceEventBuffer.add(requestId)
+            }
 
             if (geofenceProcessingJob == null || geofenceProcessingJob?.isActive == false) {
                 geofenceProcessingJob = CoroutineScope(Dispatchers.IO).launch {
@@ -42,6 +44,13 @@ object GeofenceEventManager {
             context.startService(serviceIntent)
 
             geofenceEventBuffer.clear()
+            if(geofenceProcessingJob != null) {
+                if(geofenceProcessingJob?.isActive == true) {
+                    geofenceProcessingJob?.cancel()
+                }
+
+                geofenceProcessingJob = null
+            }
         }
     }
 }

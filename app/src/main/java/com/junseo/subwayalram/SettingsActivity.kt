@@ -64,7 +64,7 @@ class SettingsActivity : ComponentActivity() {
                 ) {
                     Column {
                         Text(
-                            text = "지하철역을 선택해주세요.",
+                            text = "반경과 주기를 셋팅해주세요.",
                             style = MaterialTheme.typography.bodyLarge,  // 타이틀 텍스트 스타일
                             modifier = Modifier.padding(16.dp)
                         )

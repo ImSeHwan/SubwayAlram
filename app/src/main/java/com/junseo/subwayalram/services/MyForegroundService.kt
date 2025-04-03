@@ -14,6 +14,7 @@ import android.location.Address
 import android.location.Geocoder
 import android.location.Location
 import android.media.RingtoneManager
+import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.os.Looper
@@ -55,6 +56,8 @@ import com.junseo.subwayalram.utils.log.MLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -111,6 +114,32 @@ class MyForegroundService : Service() {
         }
     }
 
+    private fun resetLocationUpdates(interval:Int, isForce:Boolean = false) {
+        if(locationInfomationRequestInterval != interval || isForce) {
+            locationInfomationRequestInterval = interval
+
+            SharedPrefsUtil.putInt(
+                this,
+                "LOCATION_INFORMATION_REQUEST_INTERVAL",
+                interval
+            )
+
+            sendLogToActivity("설정값을 변경합니다. 주기시간(초) : ${interval / 1000}")
+
+            fusedLocationClient.removeLocationUpdates(locationCallback)
+                .addOnSuccessListener {
+                    MLog.WriteLog("sehwan", "requestLocationUpdates 제거에 성공하였습니다.")
+                }
+                .addOnFailureListener{
+                    MLog.WriteLog("sehwan", "requestLocationUpdates 제거에 실패하였습니다.")
+                }
+
+            Thread.sleep(200)
+
+            requestLocationUpdates()
+        }
+    }
+
     private fun setAllStationInfo() {
         CoroutineScope(Dispatchers.IO).launch {
             allSubwayInfos = database.subwayStationDao().getAllStations()
@@ -144,8 +173,13 @@ class MyForegroundService : Service() {
 
             CommonInfo.groupedStations?.forEach { (line, stations) ->
                 MLog.d("sehwan", "LINE_NUM: $line")
+//                for (station in stations) {
+//                    MLog.d("sehwan", "역이름 : ${station.STATION_NM}, 호선 : ${station.LINE_NUM}, 역코드 : ${station.FR_CODE}")
+//                }
             }
         }
+
+        //locationTest()
 
 
 //        CoroutineScope(Dispatchers.Main).launch {
@@ -156,8 +190,11 @@ class MyForegroundService : Service() {
 //        }
     }
 
+
     private suspend fun fetchSubwayLineInfo() {
         try {
+            MLog.WriteLog("sehwan", "[fetchSubwayLineInfo] 시작!!!!")
+
             val apiService = RetrofitClient.openapiInstance
             MLog.d("sehwan", "[fetchSubwayLineInfo] getSubwayLineInfo 호출 전")
             val response = apiService.getSubwayLineInfo(CommonInfo.SUBWAY_REAL_TIME_ARRIVAL_INFORMATION_KEY, 1, 1000)
@@ -182,11 +219,21 @@ class MyForegroundService : Service() {
         }
     }
 
+    private fun locationTest() {
+        for (station in CommonInfo.testLocation) {
+            val location = Location(station.outStnNum.toString())
+            location.latitude = station.latitude
+            location.longitude = station.longitude
+            checkLocationInStoredCoordinates(location, preLocationResult)
+            Thread.sleep(800)
+        }
+    }
+
     private fun test() {
         CoroutineScope(Dispatchers.IO).launch {
-            for (subwayList in CommonInfo.subwayStations2DArray.reversedArray())    {
+            for (subwayList in CommonInfo.subwayStations3)    {
                 newMovedDataInputProcess(subwayList.toMutableList())
-                delay(3000)
+                delay(2000)
             }
         }
     }
@@ -209,35 +256,95 @@ class MyForegroundService : Service() {
         }
     }
 
-    private val locationCallback = object : LocationCallback() {
-        override fun onLocationResult(locationResult: LocationResult) {
-            if (locationResult.locations.isNullOrEmpty()) {
-                Log.d("LocationService", "Location result is empty")
-                return
-            }
-
-            var bestLocation: Location? = null
-            val now = System.currentTimeMillis()
-
-            locationResult.locations.forEach { location ->
-                Log.d("LocationService", "루프 Location: ${location.latitude}, ${location.longitude}")
-                if (location.accuracy > 0 &&
-                    location.time > now - 60 * 1000 &&
-                    (bestLocation == null || location.accuracy < (bestLocation?.accuracy ?: 50F))
-                ) {
-                    bestLocation = location
-                }
-            }
-
-            bestLocation?.let {
-                MLog.WriteLog("sehwan", "Best Location: lat=${it.latitude}, lon=${it.longitude}, acc=${it.accuracy}")
-                checkLocationInStoredCoordinates(it)
-            } ?: run {
-                MLog.d("LocationService", "No valid location available")
+    private fun getCurrentLocation(callback: (location:Location) -> Unit) {
+        if (ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            fusedLocationClient.lastLocation.addOnSuccessListener { result ->
+                callback(result)
             }
         }
     }
 
+    private var preLocationResult: Location? = null
+
+    private val locationCallback = object : LocationCallback() {
+
+        override fun onLocationResult(locationResult: LocationResult) {
+
+            //val timeGap = (locationResult.lastLocation?.time ?: 0) - (preLocationResult?.time ?: 0)
+            //MLog.WriteLog("sehwan", "이전 위치와 시간차이 : ${timeGap/1000}초")
+
+            if (locationResult.locations.isEmpty()) {
+                MLog.WriteLog("LocationService", "Location result is empty")
+                return
+            }
+
+            val lastLocation = locationResult.lastLocation
+            if(lastLocation == null) {
+                MLog.WriteLog("LocationService", "lastLocation == null")
+                getCurrentLocation { location ->
+                    checkLocationInStoredCoordinates(location, preLocationResult)
+                }
+            } else {
+                if(preLocationResult == null) {
+                    checkLocationInStoredCoordinates(lastLocation, preLocationResult)
+                    preLocationResult = lastLocation
+                } else {
+                    val speed = preLocationResult?.let { CommonFunc.calculateSpeed(it, lastLocation) } ?: 0.0
+                    val distance = preLocationResult?.let { lastLocation.distanceTo(it) } ?: 0F
+
+                    // 속력이 100km/h보다 작을 때 동작하자. 지하철이 그 속도가 안나온다.
+                    if(speed < 100) {
+                        if (distance >= 30) {
+                            checkLocationInStoredCoordinates(lastLocation, preLocationResult)
+                        }
+                        preLocationResult = lastLocation
+
+                        locationUpdatesManager(speed)
+                    } else {
+                        MLog.WriteLog("sehwan", "[체크스킵] 속도 : ${speed}km/h")
+                        MLog.WriteLog("sehwan", "[체크스킵] 거리 : ${distance/1000}km")
+                    }
+                }
+                MLog.d("sehwan", "위치정보 인입 시간 : ${CommonFunc.formatLocationTime(lastLocation)}")
+
+            }
+        }
+    }
+
+    val speeds = mutableListOf<Double>()
+
+    /**
+     * 속도를 50개까지 지속적으로 받으면서 속도 평균에 따라 resetLocationUpdates 호출한다.
+     */
+    private fun locationUpdatesManager(speed: Double) {
+        // 새로운 속도 추가 및 30개 초과 시 오래된 데이터 제거
+        if (speeds.size == 30) speeds.removeAt(0)
+        speeds.add(speed)
+
+        // 평균 속도 계산
+        //val speedAverage = speeds.average()
+        val speedAverage = CommonFunc.calculateWeightedAverage(speeds)
+        MLog.d("sehwan", "speedAverage : $speedAverage")
+
+        speedAverageupdateData(speedAverage)
+
+        // 업데이트 주기 설정
+        val updateInterval = when {
+            speedAverage < 2 -> 1000 * 60
+            speedAverage < 8 -> 1000 * 20
+            else -> 1000 * 5
+        }
+
+        // 주기 재설정
+        resetLocationUpdates(updateInterval)
+    }
 
     // 위치정보 업데이트를 설정값에 맞춰 적용한다.
     private fun requestLocationUpdates() {
@@ -289,7 +396,7 @@ class MyForegroundService : Service() {
             fusedLocationClient.lastLocation.addOnSuccessListener { location ->
                 if (location != null) {
                     Log.d("LocationService", "Location: ${location.latitude}, ${location.longitude}")
-                    checkLocationInStoredCoordinates(location)
+                    checkLocationInStoredCoordinates(location, preLocationResult)
                 } else {
                     Log.d("LocationService", "Location not available")
                 }
@@ -342,6 +449,9 @@ class MyForegroundService : Service() {
             // 지오펜스에 트리거된 정보를 GeofenceBroadcastReceiver에서 보내준다. 이를 처리함
             ACTION_REQUEST_TRIGER_SUBWAY -> {
                 CoroutineScope(Dispatchers.IO).launch {
+                    // 지오펜스로 인입되면 속력 데이터를 초기화하자
+                    //speeds.clear()
+
                     val stationIds = intent.getStringArrayListExtra("STATION_ID_LIST")
 
                     stationIds?.let {
@@ -357,6 +467,26 @@ class MyForegroundService : Service() {
                                 }
                             }
                             moveManager.inputDetecteInfo(stationInfos)
+
+                            if(stationInfos.size > 0) {
+                                sendLogToActivity("[${stationInfos[0].LINE_NUM}][${stationInfos[0].STATION_NM}] 역에 도착하였습니다.")
+                                showLocalNotification(
+                                    "안내",
+                                    "[${stationInfos[0].STATION_NM}] 역에 도착하였습니다."
+                                )
+
+                                fetchRealtimeStationArrival(
+                                    stationInfos[0].STATION_NM,
+                                    0,
+                                    10
+                                ) { result ->
+                                    result?.let {
+                                        for (info in result) {
+                                            sendLogToActivity("[${stationInfos[0].STATION_NM}][${info.trainLineNm}][${info.bstatnNm}][${info.arvlMsg2}]")
+                                        }
+                                    }
+                                };
+                            }
                         }
                     }
                 }
@@ -385,6 +515,7 @@ class MyForegroundService : Service() {
     }
 
     private fun createNotification(): Notification {
+
         val notificationIntent = Intent(this, MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(
             this, 0, notificationIntent, PendingIntent.FLAG_IMMUTABLE // Android 12 이상에서 FLAG_IMMUTABLE 필요
@@ -462,38 +593,36 @@ class MyForegroundService : Service() {
         }
     }
 
-    suspend fun groupStationsByLine(): Map<String, List<SubwayLineInfoEntity>> = withContext(Dispatchers.IO) {
+    private suspend fun groupStationsByLine(): Map<String, List<SubwayLineInfoEntity>> = withContext(Dispatchers.IO) {
         val stations = database.subwayLineInfoDao().getAllStations()
         stations.groupBy { it.LINE_NUM } // LINE_NUM 기준으로 그룹화
     }
 
     private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val manager = getSystemService(NotificationManager::class.java)
+        val manager = getSystemService(NotificationManager::class.java)
 
-            val serviceChannel = NotificationChannel(
-                CHANNEL_ID,
-                "My Service Channel",
-                NotificationManager.IMPORTANCE_HIGH
-            )
+        val serviceChannel = NotificationChannel(
+            CHANNEL_ID,
+            "My Service Channel",
+            NotificationManager.IMPORTANCE_HIGH
+        )
 
-            val notificationChannel = NotificationChannel(
-                NOTIFICATION_CHANNEL_ID,
-                "Notification Channel",
-                NotificationManager.IMPORTANCE_HIGH
-            )
+        val notificationChannel = NotificationChannel(
+            NOTIFICATION_CHANNEL_ID,
+            "Notification Channel",
+            NotificationManager.IMPORTANCE_HIGH
+        )
 
-            notificationChannel.apply {
-                enableLights(true)
-                enableVibration(true)
-                // 진동 패턴 설정
-                // 채널아이디가 완전히 지워지거나 바뀌기 전에는 진동패턴은 바뀌지 않는다.
-                vibrationPattern = longArrayOf(100, 2000, 100, 2000)
-            }
-
-            manager?.createNotificationChannel(serviceChannel)
-            manager?.createNotificationChannel(notificationChannel)
+        notificationChannel.apply {
+            enableLights(true)
+            enableVibration(true)
+            // 진동 패턴 설정
+            // 채널아이디가 완전히 지워지거나 바뀌기 전에는 진동패턴은 바뀌지 않는다.
+            vibrationPattern = longArrayOf(100, 2000, 100, 2000)
         }
+
+        manager?.createNotificationChannel(serviceChannel)
+        manager?.createNotificationChannel(notificationChannel)
     }
 
     private fun getAddress(lat: Double, lng: Double): List<Address>? {
@@ -525,98 +654,43 @@ class MyForegroundService : Service() {
         SharedPrefsUtil.putString(context = this@MyForegroundService, CommonInfo.KEY_SAVED_CHECK_DATE_TIME, jsonSubwayLocation.toString())
     }
 
-    var moveLineInfo = ""
-    private var preMoveLineStationId:Long = 0
-
-    private var preLocation: Location? = null
-    private var checkStartTime:Calendar? = null
-
     private var plusSelectedSubway:SelectedSubway? = null
     private var minusSelectedSubway:SelectedSubway? = null
 
     /**
-     * 특정시간(10분)동안 움직임이 있는지 체크하여 위치정보 트리거 시간을 변경한다.
-     */
-    private fun checkStayLocation(currentLocation: Location) {
-        if(checkStartTime == null) {
-            checkStartTime = Calendar.getInstance()
-        }
-        if (preLocation == null) {
-            preLocation = currentLocation
-        }
-
-        val now = Calendar.getInstance()
-        checkStartTime?.let { time ->
-            val div = now.timeInMillis - time.timeInMillis
-            MLog.WriteLog("sehwan", "checkStayLocation 시간차이 : ${div/1000}")
-            if(div > 10 * 1000 * 60) {
-                // 10분이 지났는데도 위치이동이 20m 근방이라면 움직임이 없다고 본다.
-                preLocation?.let {location ->
-                    val distance = CommonFunc.haversineDistance(location.latitude, location.longitude, currentLocation.latitude, currentLocation.longitude)
-
-                    MLog.WriteLog("sehwan", "checkStayLocation 거리차이 : $distance")
-                    if(distance <= 20) {
-                        val interval = SharedPrefsUtil.getInt(this, "LOCATION_INFORMATION_REQUEST_INTERVAL")
-                        if(interval != 1000 * 60) {
-                            sendLogToActivity("위치정보 트리거 : 1분")
-                            SharedPrefsUtil.putInt(
-                                this,
-                                "LOCATION_INFORMATION_REQUEST_INTERVAL",
-                                1000 * 60
-                            )
-                            resetLocationUpdates()
-                        }
-
-                        checkStartTime = null
-                        preLocation = null
-                    }
-
-                    if(distance > 500) {
-                        val interval = SharedPrefsUtil.getInt(this, "LOCATION_INFORMATION_REQUEST_INTERVAL")
-                        if(interval != 1000 * 20) {
-                            sendLogToActivity("위치정보 트리거 : 20초")
-                            checkStartTime = null
-                            preLocation = null
-                            SharedPrefsUtil.putInt(this, "LOCATION_INFORMATION_REQUEST_INTERVAL", 1000 * 20)
-                            resetLocationUpdates()
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /**
      * 위치정보가 변경될 때마다 이동장소를 확인하여 사용자에게 노티해준다.
      */
-    private fun checkLocationInStoredCoordinates(location: Location?) {
+    private fun checkLocationInStoredCoordinates(location: Location?, preLocation: Location?) {
         CoroutineScope(Dispatchers.IO).launch {
             if (location != null) {
-                checkStayLocation(location)
+
+                var speed: Double
 
                 allSubwayInfos?.let { arrSubway ->
-                    val address = getAddress(location.latitude, location.longitude)
-                    MLog.WriteLog("sehwan", "현위치 주소 : ${address?.get(0)?.getAddressLine(0)}")
+                    //val address = getAddress(location.latitude, location.longitude)
+                    //MLog.WriteLog("sehwan", "현위치 주소 : ${address?.get(0)?.getAddressLine(0)}")
+
+                    val timeGap = location.time - (preLocation?.time ?: 0)
+                    MLog.WriteLog("sehwan", "현재위치 : ${location.latitude}, ${location.longitude}")
+                    MLog.WriteLog("sehwan", "이전위치 : ${preLocation?.latitude}, ${preLocation?.longitude}")
+                    MLog.WriteLog("sehwan", "이전 위치와 시간차이 : ${timeGap/1000}초")
+
+                    speed = preLocation?.let { CommonFunc.calculateSpeed(it, location) } ?: 0.0
+                    MLog.WriteLog("sehwan", "[체크] 속도 : ${speed}km/h")
 
                     val currentLatLng = LatLng(location.latitude, location.longitude)
 
-                    var stationInfos:MutableList<SubwayStation> = mutableListOf()
+                    var stationInfos:MutableList<SubwayStation>? = null
                     val stationInfo = nearestDistanceSubway(currentLatLng, arrSubway) // 단건 역정보
 
-                    stationInfos = if(stationInfo != null) {
+                    if(stationInfo != null) {
                         // 환승역이 있으면 모든 역을 다 넣어준다.
                         val stationTransDatas = arrSubway.filter { it.stationName == stationInfo.stationName}
-                        //MLog.WriteLog("sehwan", "역정보 ${stationTransDatas}")
-                        stationTransDatas.toMutableList()
-                    } else {
-                        // 정확한 단건정보가 없다면 근사치라도 뽑아 진행한다.
-                        nearestDistanceSubways(
-                            currentLatLng,
-                            arrSubway
-                        ).toMutableList() // 단건 역정보가 없을 경우를 위함
+                        MLog.WriteLog("sehwan", "역정보 $stationTransDatas")
+                        stationInfos = stationTransDatas.toMutableList()
                     }
 
-                    if(stationInfos.isNotEmpty()) {
+                    if(stationInfos?.isNotEmpty() == true) {
                         newMovedDataInputProcess(stationInfos)
                     } else {
                         MLog.WriteLog("sehwan", "checkLocationInStoredCoordinates 데이터가 없다.")
@@ -645,13 +719,14 @@ class MyForegroundService : Service() {
      * - 현재역이 노선과 맞지않다면 이전역정보를 확인하여 환승역(환승역 히스토리 필요)인지 체크 후 이동가능한 역인지 확인(이동가능한 역이면 이동경로 재설정)
      */
     private suspend fun newMovedDataInputProcess(stationList: List<SubwayStation>) {
+        MLog.WriteLog("sehwan", "newMovedDataInputProcess 데이터 [$stationList]")
+
         val stationInfos:MutableList<StationInfo> = mutableListOf()
         for (station in stationList) {
-            val stationInfo = database.subwayLineInfoDao().getStation(CommonFunc.extractStationName(station.stationName),
-                CommonFunc.extractStationName(station.lineName))
+            val stationInfo = database.subwayLineInfoDao().getStationByStationCode(String.format(Locale.KOREAN, "%04d", station.outStnNum))
             if(stationInfo != null) {
                 stationInfos.add(stationInfo.toStationInfo())
-                MLog.WriteLog("sehwan", "newMovedDataInputProcess 데이터 [${stationInfo.STATION_NM}][${stationInfo.LINE_NUM}]")
+                //MLog.WriteLog("sehwan", "newMovedDataInputProcess 데이터 [${stationInfo.STATION_NM}][${stationInfo.LINE_NUM}]")
             }
         }
         moveManager.inputDetecteInfo(stationInfos)
@@ -779,6 +854,7 @@ class MyForegroundService : Service() {
         currentLatLng: LatLng,
         storedSubways: List<SubwayStation>
     ): List<SubwayStation> {
+        MLog.WriteLog("sehwan", "정보가 정확하지 않아 대략적인 역정보 가져옴!!")
         return storedSubways
             .map { storedCoordinate ->
                 val distanceResult = FloatArray(1)
@@ -820,7 +896,7 @@ class MyForegroundService : Service() {
                 Pair(storedCoordinate, distanceResult[0])
             }
             .minByOrNull { it.second } // 거리 기준으로 가장 가까운 역 선택
-            ?.takeIf { it.second <= 100 } // 거리가 100m 이하일 경우만 반환
+            ?.takeIf { it.second <= 150 } // 거리가 150m 이하일 경우만 반환
             ?.first // Pair에서 SubwayStation 객체만 반환
     }
 
@@ -850,8 +926,20 @@ class MyForegroundService : Service() {
         }
     }
 
+    private val binder = LocalBinder()
+    private var speedAverage = MutableStateFlow(0.0)
+    private fun speedAverageupdateData(newData: Double) {
+        speedAverage.value = newData // 데이터 업데이트
+    }
+
+    fun observespeedAverage(): StateFlow<Double> = speedAverage // 데이터 흐름 노출
+
+    inner class LocalBinder : Binder() {
+        fun getService(): MyForegroundService = this@MyForegroundService
+    }
+
     override fun onBind(intent: Intent?): IBinder? {
-        return null // 바인딩할 필요가 없으므로 null 반환
+        return binder // 바인딩할 필요가 없으므로 null 반환
     }
 
     override fun onDestroy() {

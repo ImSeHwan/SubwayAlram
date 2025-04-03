@@ -29,7 +29,7 @@ class GeofenceManager(private val context: Context) {
         val geofence = Geofence.Builder()
             .setCircularRegion(selectedSubway.latitude, selectedSubway.longitude, radius)
             .setExpirationDuration(Geofence.NEVER_EXPIRE)
-            .setTransitionTypes(Geofence.GEOFENCE_TRANSITION_ENTER or Geofence.GEOFENCE_TRANSITION_EXIT)
+            .setTransitionTypes(Geofence.GEOFENCE_TRANSITION_ENTER)
             .setRequestId(selectedSubway.statnId)
             .build()
 

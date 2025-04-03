@@ -96,8 +96,14 @@ interface SubwayLineInfoDao {
     @Query("SELECT * FROM subway_line_info WHERE FR_CODE = :stationCode")
     suspend fun getStationByCode(stationCode: String): SubwayLineInfoEntity?
 
+    @Query("SELECT * FROM subway_line_info WHERE STATION_CD = :stationCode")
+    suspend fun getStationByStationCode(stationCode: String): SubwayLineInfoEntity?
+
     @Query("SELECT * FROM subway_line_info WHERE STATION_NM = :stationName")
     suspend fun getStationByName(stationName: String): List<SubwayLineInfoEntity>
+
+    @Query("SELECT * FROM subway_line_info WHERE FR_CODE LIKE :query")
+    suspend fun searchTransferStationsByCode(query: String): List<SubwayLineInfoEntity>
 
     //stationName = :stationName AND lineName = :lineName
     @Query("SELECT * FROM subway_line_info WHERE STATION_NM = :stationName AND LINE_NUM = :stationLine")
